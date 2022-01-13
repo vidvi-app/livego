@@ -2,15 +2,15 @@ package core
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	neturl "net/url"
 	"strings"
 
-	"github.com/gwuhaolin/livego/av"
-	"github.com/gwuhaolin/livego/protocol/amf"
+	"github.com/vidvi-app/livego/av"
+	"github.com/vidvi-app/livego/protocol/amf"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -220,43 +220,18 @@ func (connClient *ConnClient) Start(url string, method string) error {
 		return fmt.Errorf("u path err: %s", path)
 	}
 	connClient.app = ps[0]
-	connClient.title = ps[1]
+	connClient.title = ps[1] + "?" + u.RawQuery
 	connClient.query = u.RawQuery
 	connClient.tcurl = "rtmp://" + u.Host + "/" + connClient.app
-	port := ":1935"
-	host := u.Host
-	localIP := ":0"
-	var remoteIP string
-	if strings.Index(host, ":") != -1 {
-		host, port, err = net.SplitHostPort(host)
-		if err != nil {
-			return err
-		}
-		port = ":" + port
-	}
-	ips, err := net.LookupIP(host)
-	log.Debugf("ips: %v, host: %v", ips, host)
-	if err != nil {
-		log.Warning(err)
-		return err
-	}
-	remoteIP = ips[rand.Intn(len(ips))].String()
-	if strings.Index(remoteIP, ":") == -1 {
-		remoteIP += port
-	}
 
-	local, err := net.ResolveTCPAddr("tcp", localIP)
-	if err != nil {
-		log.Warning(err)
-		return err
+	var conn net.Conn
+
+	switch u.Scheme {
+	case "rtmp":
+		conn, err = net.Dial("tcp", u.Host)
+	case "rtmps":
+		conn, err = tls.Dial("tcp", u.Host, nil)
 	}
-	log.Debug("remoteIP: ", remoteIP)
-	remote, err := net.ResolveTCPAddr("tcp", remoteIP)
-	if err != nil {
-		log.Warning(err)
-		return err
-	}
-	conn, err := net.DialTCP("tcp", local, remote)
 	if err != nil {
 		log.Warning(err)
 		return err
