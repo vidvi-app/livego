@@ -28,6 +28,10 @@ var (
 type Server struct {
 	handler av.Handler
 	//getter  av.GetWriter
+
+	OnConnect    func()
+	OnDisconnect func()
+	ModifyConn   func(net.Conn) net.Conn
 }
 
 func NewRtmpServer(h av.Handler, getter av.GetWriter) *Server {
@@ -49,7 +53,10 @@ func (s *Server) Serve(listener net.Listener) (err error) {
 		if err != nil {
 			return
 		}
-		conn := core.NewConn(netconn, 4*1024)
+		if s.ModifyConn != nil {
+			netconn = s.ModifyConn(netconn)
+		}
+		conn := core.NewConn(netconn, 4*1024, s.OnDisconnect)
 		log.Debug("new client, connect remote: ", conn.RemoteAddr().String(),
 			"local:", conn.LocalAddr().String())
 		go s.handleConn(conn)
@@ -57,6 +64,9 @@ func (s *Server) Serve(listener net.Listener) (err error) {
 }
 
 func (s *Server) handleConn(conn *core.Conn) error {
+	if s.OnConnect != nil {
+		s.OnConnect()
+	}
 	if err := conn.HandshakeServer(); err != nil {
 		conn.Close()
 		log.Error("handleConn HandshakeServer err: ", err)
