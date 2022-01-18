@@ -3,6 +3,7 @@ package rtmprelay
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/vidvi-app/livego/av"
 	"github.com/vidvi-app/livego/protocol/rtmp/core"
@@ -89,7 +90,7 @@ func (s *StaticPush) Start() (err error) {
 
 		re := retry.Retry{
 			Times:    5,
-			Cooldown: 5,
+			Cooldown: time.Second * 5,
 		}
 		err = re.Do(func() error {
 			return s.connectClient.Start(s.RtmpUrl, "publish")
