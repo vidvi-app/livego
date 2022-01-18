@@ -6,132 +6,137 @@ import (
 
 	"github.com/vidvi-app/livego/av"
 	"github.com/vidvi-app/livego/protocol/rtmp/core"
+	"github.com/vidvi-app/livego/utils/retry"
 
 	log "github.com/sirupsen/logrus"
 )
 
 type StaticPush struct {
 	RtmpUrl       string
-	packet_chan   chan *av.Packet
-	sndctrl_chan  chan string
+	packetChan    chan *av.Packet
+	sndctrlChan   chan string
 	connectClient *core.ConnClient
-	startflag     bool
+	startFlag     bool
+	abandoned     bool
+	once          sync.Once
 }
 
-var G_StaticPushMap = make(map[string](*StaticPush))
-var g_MapLock = new(sync.RWMutex)
+var staticPushMap = make(map[string]*StaticPush)
+var mapLock = new(sync.RWMutex)
 
 var (
 	STATIC_RELAY_STOP_CTRL = "STATIC_RTMPRELAY_STOP"
 )
 
 func GetAndCreateStaticPushObject(rtmpurl string) *StaticPush {
-	g_MapLock.RLock()
-	staticpush, ok := G_StaticPushMap[rtmpurl]
+	mapLock.RLock()
+	staticpush, ok := staticPushMap[rtmpurl]
 	log.Debugf("GetAndCreateStaticPushObject: %s, return %v", rtmpurl, ok)
 	if !ok {
-		g_MapLock.RUnlock()
+		mapLock.RUnlock()
 		newStaticpush := NewStaticPush(rtmpurl)
 
-		g_MapLock.Lock()
-		G_StaticPushMap[rtmpurl] = newStaticpush
-		g_MapLock.Unlock()
+		mapLock.Lock()
+		staticPushMap[rtmpurl] = newStaticpush
+		mapLock.Unlock()
 
 		return newStaticpush
 	}
-	g_MapLock.RUnlock()
+	mapLock.RUnlock()
 
 	return staticpush
 }
 
 func GetStaticPushObject(rtmpurl string) (*StaticPush, error) {
-	g_MapLock.RLock()
-	if staticpush, ok := G_StaticPushMap[rtmpurl]; ok {
-		g_MapLock.RUnlock()
+	mapLock.RLock()
+	if staticpush, ok := staticPushMap[rtmpurl]; ok {
+		mapLock.RUnlock()
 		return staticpush, nil
 	}
-	g_MapLock.RUnlock()
+	mapLock.RUnlock()
 
 	return nil, fmt.Errorf("G_StaticPushMap[%s] not exist....", rtmpurl)
 }
 
 func ReleaseStaticPushObject(rtmpurl string) {
-	g_MapLock.RLock()
-	if _, ok := G_StaticPushMap[rtmpurl]; ok {
-		g_MapLock.RUnlock()
+	mapLock.RLock()
+	if _, ok := staticPushMap[rtmpurl]; ok {
+		mapLock.RUnlock()
 
 		log.Debugf("ReleaseStaticPushObject %s ok", rtmpurl)
-		g_MapLock.Lock()
-		delete(G_StaticPushMap, rtmpurl)
-		g_MapLock.Unlock()
+		mapLock.Lock()
+		delete(staticPushMap, rtmpurl)
+		mapLock.Unlock()
 	} else {
-		g_MapLock.RUnlock()
+		mapLock.RUnlock()
 		log.Debugf("ReleaseStaticPushObject: not find %s", rtmpurl)
 	}
 }
 
 func NewStaticPush(rtmpurl string) *StaticPush {
 	return &StaticPush{
-		RtmpUrl:       rtmpurl,
-		packet_chan:   make(chan *av.Packet, 500),
-		sndctrl_chan:  make(chan string),
-		connectClient: nil,
-		startflag:     false,
+		RtmpUrl:     rtmpurl,
+		packetChan:  make(chan *av.Packet, 500),
+		sndctrlChan: make(chan string),
 	}
 }
 
-func (self *StaticPush) Start() error {
-	if self.startflag {
-		return fmt.Errorf("StaticPush already start %s", self.RtmpUrl)
-	}
+func (s *StaticPush) Start() (err error) {
+	s.once.Do(func() {
+		s.connectClient = core.NewConnClient()
 
-	self.connectClient = core.NewConnClient()
+		log.Debugf("static publish server addr:%v starting....", s.RtmpUrl)
 
-	log.Debugf("static publish server addr:%v starting....", self.RtmpUrl)
-	err := self.connectClient.Start(self.RtmpUrl, "publish")
-	if err != nil {
-		log.Debugf("connectClient.Start url=%v error", self.RtmpUrl)
-		return err
-	}
-	log.Debugf("static publish server addr:%v started, streamid=%d", self.RtmpUrl, self.connectClient.GetStreamId())
-	go self.HandleAvPacket()
+		re := retry.Retry{
+			Times:    5,
+			Cooldown: 5,
+		}
+		err = re.Do(func() error {
+			return s.connectClient.Start(s.RtmpUrl, "publish")
+		})
+		if err != nil {
+			log.Debugf("connectClient.Start url=%v error", s.RtmpUrl)
+			s.abandoned = true
+			return
+		}
+		log.Debugf("static publish server addr:%v started, streamid=%d", s.RtmpUrl, s.connectClient.GetStreamId())
+		s.startFlag = true
+		go s.HandleAvPacket()
+	})
 
-	self.startflag = true
-	return nil
+	return
 }
 
-func (self *StaticPush) Stop() {
-	if !self.startflag {
+func (s *StaticPush) Stop() {
+	if !s.startFlag || s.abandoned {
 		return
 	}
 
-	log.Debugf("StaticPush Stop: %s", self.RtmpUrl)
-	self.sndctrl_chan <- STATIC_RELAY_STOP_CTRL
-	self.startflag = false
+	log.Debugf("StaticPush Stop: %s", s.RtmpUrl)
+	s.sndctrlChan <- STATIC_RELAY_STOP_CTRL
+	s.startFlag = false
 }
 
-func (self *StaticPush) WriteAvPacket(packet *av.Packet) {
-	if !self.startflag {
+func (s *StaticPush) WriteAvPacket(packet *av.Packet) {
+	if !s.startFlag || s.abandoned {
 		return
 	}
 
-	self.packet_chan <- packet
+	s.packetChan <- packet
 }
 
-func (self *StaticPush) sendPacket(p *av.Packet) {
-	if !self.startflag {
+func (s *StaticPush) sendPacket(p *av.Packet) {
+	if !s.startFlag || s.abandoned {
 		return
 	}
 	var cs core.ChunkStream
 
 	cs.Data = p.Data
 	cs.Length = uint32(len(p.Data))
-	cs.StreamID = self.connectClient.GetStreamId()
+	cs.StreamID = s.connectClient.GetStreamId()
 	cs.Timestamp = p.TimeStamp
 	//cs.Timestamp += v.BaseTimeStamp()
 
-	//log.Printf("Static sendPacket: rtmpurl=%s, length=%d, streamid=%d",
-	//	self.RtmpUrl, len(p.Data), cs.StreamID)
 	if p.IsVideo {
 		cs.TypeID = av.TAG_VIDEO
 	} else {
@@ -142,29 +147,33 @@ func (self *StaticPush) sendPacket(p *av.Packet) {
 		}
 	}
 
-	self.connectClient.Write(cs)
+	s.connectClient.Write(cs)
 }
 
-func (self *StaticPush) HandleAvPacket() {
-	if !self.IsStart() {
-		log.Debugf("static push %s not started", self.RtmpUrl)
+func (s *StaticPush) HandleAvPacket() {
+	if !s.IsStart() || s.abandoned {
+		log.Debugf("static push %s not started", s.RtmpUrl)
 		return
 	}
 
 	for {
 		select {
-		case packet := <-self.packet_chan:
-			self.sendPacket(packet)
-		case ctrlcmd := <-self.sndctrl_chan:
+		case packet := <-s.packetChan:
+			s.sendPacket(packet)
+		case ctrlcmd := <-s.sndctrlChan:
 			if ctrlcmd == STATIC_RELAY_STOP_CTRL {
-				self.connectClient.Close(nil)
-				log.Debugf("Static HandleAvPacket close: publishurl=%s", self.RtmpUrl)
+				s.connectClient.Close(nil)
+				log.Debugf("Static HandleAvPacket close: publishurl=%s", s.RtmpUrl)
 				return
 			}
 		}
 	}
 }
 
-func (self *StaticPush) IsStart() bool {
-	return self.startflag
+func (s *StaticPush) IsStart() bool {
+	return s.startFlag
+}
+
+func (s *StaticPush) Abandoned() bool {
+	return s.abandoned
 }
