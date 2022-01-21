@@ -20,6 +20,7 @@ type StaticPush struct {
 	sndctrlChan   chan string
 	connectClient *core.ConnClient
 	startFlag     bool
+	stopping      bool
 	abandoned     bool
 	sem           *semaphore.Weighted
 }
@@ -103,6 +104,9 @@ func (s *StaticPush) Start() (err error) {
 		Cooldown: time.Second * 5,
 	}
 	err = re.Do(func() error {
+		if s.stopping == true {
+			return nil
+		}
 		return s.connectClient.Start(s.RtmpUrl, "publish")
 	})
 	if err != nil {
@@ -117,6 +121,7 @@ func (s *StaticPush) Start() (err error) {
 }
 
 func (s *StaticPush) Stop() {
+	s.stopping = true
 	s.sem.Acquire(context.Background(), 1)
 	defer s.sem.Release(1)
 	if !s.startFlag || s.abandoned {
@@ -127,6 +132,7 @@ func (s *StaticPush) Stop() {
 	log.Debugf("StaticPush Stop: %s", s.RtmpUrl)
 	s.sndctrlChan <- STATIC_RELAY_STOP_CTRL
 	s.startFlag = false
+	s.stopping = false
 }
 
 func (s *StaticPush) WriteAvPacket(packet *av.Packet) {
