@@ -56,7 +56,7 @@ func (s *Server) Serve(listener net.Listener) (err error) {
 		if s.ModifyConn != nil {
 			netconn = s.ModifyConn(netconn)
 		}
-		conn := core.NewConn(netconn, 4*1024, s.OnDisconnect)
+		conn := core.NewConn(netconn, 4*1024)
 		log.Debug("new client, connect remote: ", conn.RemoteAddr().String(),
 			"local:", conn.LocalAddr().String())
 		go s.handleConn(conn)
@@ -66,6 +66,9 @@ func (s *Server) Serve(listener net.Listener) (err error) {
 func (s *Server) handleConn(conn *core.Conn) error {
 	if s.OnConnect != nil {
 		s.OnConnect()
+	}
+	if s.OnDisconnect != nil {
+		defer s.OnDisconnect()
 	}
 	if err := conn.HandshakeServer(); err != nil {
 		conn.Close()

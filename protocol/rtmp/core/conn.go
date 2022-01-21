@@ -30,10 +30,9 @@ type Conn struct {
 	rw                  *ReadWriter
 	pool                *pool.Pool
 	chunks              map[uint32]ChunkStream
-	onClose             func()
 }
 
-func NewConn(c net.Conn, bufferSize int, onClose func()) *Conn {
+func NewConn(c net.Conn, bufferSize int) *Conn {
 	return &Conn{
 		Conn:                c,
 		chunkSize:           128,
@@ -43,7 +42,6 @@ func NewConn(c net.Conn, bufferSize int, onClose func()) *Conn {
 		pool:                pool.NewPool(),
 		rw:                  NewReadWriter(c, bufferSize),
 		chunks:              make(map[uint32]ChunkStream),
-		onClose:             onClose,
 	}
 }
 
@@ -93,9 +91,6 @@ func (conn *Conn) Flush() error {
 }
 
 func (conn *Conn) Close() error {
-	if conn.onClose != nil {
-		conn.onClose()
-	}
 	return conn.Conn.Close()
 }
 

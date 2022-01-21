@@ -1,7 +1,9 @@
 package rtmprelay
 
 import (
+	"context"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"sync"
 	"time"
 
@@ -19,7 +21,7 @@ type StaticPush struct {
 	connectClient *core.ConnClient
 	startFlag     bool
 	abandoned     bool
-	once          sync.Once
+	sem           *semaphore.Weighted
 }
 
 var staticPushMap = make(map[string]*StaticPush)
@@ -79,37 +81,46 @@ func NewStaticPush(rtmpurl string) *StaticPush {
 		RtmpUrl:     rtmpurl,
 		packetChan:  make(chan *av.Packet, 500),
 		sndctrlChan: make(chan string),
+		sem:         semaphore.NewWeighted(1),
 	}
 }
 
 func (s *StaticPush) Start() (err error) {
-	s.once.Do(func() {
-		s.connectClient = core.NewConnClient()
+	if s.startFlag || s.abandoned {
+		return
+	}
+	if !s.sem.TryAcquire(1) {
+		return
+	}
+	defer s.sem.Release(1)
 
-		log.Debugf("static publish server addr:%v starting....", s.RtmpUrl)
+	s.connectClient = core.NewConnClient()
 
-		re := retry.Retry{
-			Times:    5,
-			Cooldown: time.Second * 5,
-		}
-		err = re.Do(func() error {
-			return s.connectClient.Start(s.RtmpUrl, "publish")
-		})
-		if err != nil {
-			log.Debugf("connectClient.Start url=%v error", s.RtmpUrl)
-			s.abandoned = true
-			return
-		}
-		log.Debugf("static publish server addr:%v started, streamid=%d", s.RtmpUrl, s.connectClient.GetStreamId())
-		s.startFlag = true
-		go s.HandleAvPacket()
+	log.Debugf("static publish server addr:%v starting....", s.RtmpUrl)
+
+	re := retry.Retry{
+		Times:    5,
+		Cooldown: time.Second * 5,
+	}
+	err = re.Do(func() error {
+		return s.connectClient.Start(s.RtmpUrl, "publish")
 	})
-
+	if err != nil {
+		log.Debugf("connectClient.Start url=%v error", s.RtmpUrl)
+		s.abandoned = true
+		return
+	}
+	log.Debugf("static publish server addr:%v started, streamid=%d", s.RtmpUrl, s.connectClient.GetStreamId())
+	s.startFlag = true
+	go s.HandleAvPacket()
 	return
 }
 
 func (s *StaticPush) Stop() {
+	s.sem.Acquire(context.Background(), 1)
+	defer s.sem.Release(1)
 	if !s.startFlag || s.abandoned {
+		s.abandoned = false
 		return
 	}
 
