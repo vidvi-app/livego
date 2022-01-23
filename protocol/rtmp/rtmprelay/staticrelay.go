@@ -87,13 +87,13 @@ func NewStaticPush(rtmpurl string) *StaticPush {
 }
 
 func (s *StaticPush) Start() (err error) {
-	if s.startFlag || s.abandoned {
-		return
-	}
 	if !s.sem.TryAcquire(1) {
 		return
 	}
 	defer s.sem.Release(1)
+	if s.startFlag || s.abandoned {
+		return
+	}
 
 	s.connectClient = core.NewConnClient()
 
@@ -109,6 +109,9 @@ func (s *StaticPush) Start() (err error) {
 		}
 		return s.connectClient.Start(s.RtmpUrl, "publish")
 	})
+	if s.stopping {
+		return
+	}
 	if err != nil {
 		log.Debugf("connectClient.Start url=%v error", s.RtmpUrl)
 		s.abandoned = true
@@ -122,17 +125,21 @@ func (s *StaticPush) Start() (err error) {
 
 func (s *StaticPush) Stop() {
 	s.stopping = true
+
 	s.sem.Acquire(context.Background(), 1)
 	defer s.sem.Release(1)
-	if !s.startFlag || s.abandoned {
+	defer func() {
+		s.stopping = false
 		s.abandoned = false
+		s.startFlag = false
+	}()
+
+	if !s.startFlag || s.abandoned {
 		return
 	}
 
 	log.Debugf("StaticPush Stop: %s", s.RtmpUrl)
 	s.sndctrlChan <- STATIC_RELAY_STOP_CTRL
-	s.startFlag = false
-	s.stopping = false
 }
 
 func (s *StaticPush) WriteAvPacket(packet *av.Packet) {

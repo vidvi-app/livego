@@ -26,7 +26,7 @@ var (
 )
 
 var (
-	ErrFail = fmt.Errorf("respone err")
+	ErrFail = fmt.Errorf("response err")
 )
 
 type ConnClient struct {
@@ -302,5 +302,7 @@ func (connClient *ConnClient) GetStreamId() uint32 {
 }
 
 func (connClient *ConnClient) Close(err error) {
-	connClient.conn.Close()
+	if connClient.conn != nil {
+		connClient.conn.Close()
+	}
 }
