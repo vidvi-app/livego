@@ -117,7 +117,7 @@ func (s *StaticPush) Start() (err error) {
 		s.abandoned = true
 		return
 	}
-	log.Debugf("static publish server addr:%v started, streamid=%d", s.RtmpUrl, s.connectClient.GetStreamId())
+	log.Infof("static push started: %v", s.RtmpUrl)
 	s.startFlag = true
 	go s.HandleAvPacket()
 	return
@@ -129,6 +129,7 @@ func (s *StaticPush) Stop() {
 	s.sem.Acquire(context.Background(), 1)
 	defer s.sem.Release(1)
 	defer func() {
+		log.Infof("StaticPush Stop: %s", s.RtmpUrl)
 		s.stopping = false
 		s.abandoned = false
 		s.startFlag = false
@@ -138,7 +139,6 @@ func (s *StaticPush) Stop() {
 		return
 	}
 
-	log.Debugf("StaticPush Stop: %s", s.RtmpUrl)
 	s.sndctrlChan <- STATIC_RELAY_STOP_CTRL
 }
 
@@ -172,7 +172,13 @@ func (s *StaticPush) sendPacket(p *av.Packet) {
 		}
 	}
 
-	s.connectClient.Write(cs)
+	if err := s.connectClient.Write(cs); err != nil {
+		if !s.stopping {
+			s.stopping = true
+			log.Errorf("error writing packet. restarting... addr=%v, err=%v", s.RtmpUrl, err)
+			go s.Stop()
+		}
+	}
 }
 
 func (s *StaticPush) HandleAvPacket() {
