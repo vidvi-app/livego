@@ -24,5 +24,5 @@ func (r *Retry) Do(f func() error) error {
 		}
 		<-time.After(r.Cooldown)
 	}
-	return fmt.Errorf("maximum retries exceeded, last err: %w", err)
+	return fmt.Errorf("maximum retries exceeded, last_err=%w", err)
 }

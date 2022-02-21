@@ -86,7 +86,7 @@ func NewStaticPush(rtmpurl string) *StaticPush {
 	}
 }
 
-func (s *StaticPush) Start() (err error) {
+func (s *StaticPush) Start(configPkts ...*av.Packet) (err error) {
 	if !s.sem.TryAcquire(1) {
 		return
 	}
@@ -118,6 +118,9 @@ func (s *StaticPush) Start() (err error) {
 		return
 	}
 	log.Infof("static push started: %v", s.RtmpUrl)
+	for _, pkt := range configPkts {
+		s.packetChan <- pkt
+	}
 	s.startFlag = true
 	go s.HandleAvPacket()
 	return
