@@ -213,6 +213,9 @@ func (connClient *ConnClient) Start(url string, method string) error {
 	if err != nil {
 		return err
 	}
+	if _, _, err = net.SplitHostPort(u.Host); err != nil {
+		u.Host += ":1935"
+	}
 	connClient.url = url
 	path := strings.TrimLeft(u.Path, "/")
 	ps := strings.SplitN(path, "/", 2)
