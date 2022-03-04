@@ -64,6 +64,7 @@ func (s *Server) Serve(listener net.Listener) (err error) {
 }
 
 func (s *Server) handleConn(conn *core.Conn) error {
+	defer conn.Close()
 	if s.OnConnect != nil {
 		s.OnConnect()
 	}
@@ -71,14 +72,12 @@ func (s *Server) handleConn(conn *core.Conn) error {
 		defer s.OnDisconnect()
 	}
 	if err := conn.HandshakeServer(); err != nil {
-		conn.Close()
 		log.Error("handleConn HandshakeServer err: ", err)
 		return err
 	}
 	connServer := core.NewConnServer(conn)
 
 	if err := connServer.ReadMsg(); err != nil {
-		conn.Close()
 		log.Error("handleConn read msg err: ", err)
 		return err
 	}
